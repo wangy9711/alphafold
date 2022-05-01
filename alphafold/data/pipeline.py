@@ -159,78 +159,99 @@ class DataPipeline:
     input_description = input_descs[0]
     num_res = len(input_sequence)
 
+    # make sequence features
+    sequence_features = make_sequence_features(
+        sequence=input_sequence,
+        description=input_description,
+        num_res=num_res)
+
+    # make MSA features
+    # search uniref90
     uniref90_out_path = os.path.join(msa_output_dir, 'uniref90_hits.sto')
-    jackhmmer_uniref90_result = run_msa_tool(
-        msa_runner=self.jackhmmer_uniref90_runner,
-        input_fasta_path=input_fasta_path,
-        msa_out_path=uniref90_out_path,
-        msa_format='sto',
-        use_precomputed_msas=self.use_precomputed_msas,
-        max_sto_sequences=self.uniref_max_hits)
-    mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
-    jackhmmer_mgnify_result = run_msa_tool(
-        msa_runner=self.jackhmmer_mgnify_runner,
-        input_fasta_path=input_fasta_path,
-        msa_out_path=mgnify_out_path,
-        msa_format='sto',
-        use_precomputed_msas=self.use_precomputed_msas,
-        max_sto_sequences=self.mgnify_max_hits)
-
-    msa_for_templates = jackhmmer_uniref90_result['sto']
-    msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
-    msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
-        msa_for_templates)
-
-    if self.template_searcher.input_format == 'sto':
-      pdb_templates_result = self.template_searcher.query(msa_for_templates)
-    elif self.template_searcher.input_format == 'a3m':
-      uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
-      pdb_templates_result = self.template_searcher.query(uniref90_msa_as_a3m)
-    else:
-      raise ValueError('Unrecognized template input format: '
-                       f'{self.template_searcher.input_format}')
-
-    pdb_hits_out_path = os.path.join(
-        msa_output_dir, f'pdb_hits.{self.template_searcher.output_format}')
-    with open(pdb_hits_out_path, 'w') as f:
-      f.write(pdb_templates_result)
-
-    uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
-    mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
-
-    pdb_template_hits = self.template_searcher.get_template_hits(
-        output_string=pdb_templates_result, input_sequence=input_sequence)
-
-    if self._use_small_bfd:
-      bfd_out_path = os.path.join(msa_output_dir, 'small_bfd_hits.sto')
-      jackhmmer_small_bfd_result = run_msa_tool(
-          msa_runner=self.jackhmmer_small_bfd_runner,
+    if not os.path.isfile(uniref90_out_path):
+      jackhmmer_uniref90_result = run_msa_tool(
+          msa_runner=self.jackhmmer_uniref90_runner,
           input_fasta_path=input_fasta_path,
-          msa_out_path=bfd_out_path,
+          msa_out_path=uniref90_out_path,
           msa_format='sto',
-          use_precomputed_msas=self.use_precomputed_msas)
-      bfd_msa = parsers.parse_stockholm(jackhmmer_small_bfd_result['sto'])
+          use_precomputed_msas=self.use_precomputed_msas,
+          max_sto_sequences=self.uniref_max_hits)
     else:
-      bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
+      logging.info("loading uniref")
+      jackhmmer_uniref90_result={}
+      with open(uniref90_out_path, 'r') as f:
+        jackhmmer_uniref90_result['sto'] = f.read()
+
+    # search mgnify
+    mgnify_out_path = os.path.join(msa_output_dir, 'mgnify_hits.sto')
+    if not os.path.isfile(mgnify_out_path):
+      jackhmmer_mgnify_result = run_msa_tool(
+          msa_runner=self.jackhmmer_mgnify_runner,
+          input_fasta_path=input_fasta_path,
+          msa_out_path=mgnify_out_path,
+          msa_format='sto',
+          use_precomputed_msas=self.use_precomputed_msas,
+          max_sto_sequences=self.mgnify_max_hits)
+    else:
+      logging.info("loading mgnify")
+      jackhmmer_mgnify_result={}
+      with open(uniref90_out_path, 'r') as f:
+        jackhmmer_mgnify_result['sto'] = f.read()
+
+    # search bfd + uniclust
+    bfd_out_path = os.path.join(msa_output_dir, 'bfd_uniclust_hits.a3m')
+    if not os.path.isfile(bfd_out_path):
       hhblits_bfd_uniclust_result = run_msa_tool(
           msa_runner=self.hhblits_bfd_uniclust_runner,
           input_fasta_path=input_fasta_path,
           msa_out_path=bfd_out_path,
           msa_format='a3m',
           use_precomputed_msas=self.use_precomputed_msas)
-      bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
+    else:
+      logging.info("loading bfd")
+      hhblits_bfd_uniclust_result = {}
+      with open(bfd_out_path, 'r') as f:
+        hhblits_bfd_uniclust_result['a3m'] = f.read()
 
+    bfd_msa = parsers.parse_a3m(hhblits_bfd_uniclust_result['a3m'])
+    uniref90_msa = parsers.parse_stockholm(jackhmmer_uniref90_result['sto'])
+    mgnify_msa = parsers.parse_stockholm(jackhmmer_mgnify_result['sto'])
+    msa_features = make_msa_features((uniref90_msa, bfd_msa, mgnify_msa))
+
+    # make template features
+    # search template
+    pdb_hits_out_path = os.path.join(
+        msa_output_dir, f'pdb_hits.{self.template_searcher.output_format}')
+    if not os.path.isfile(pdb_hits_out_path):
+      msa_for_templates = jackhmmer_uniref90_result['sto']
+      msa_for_templates = parsers.deduplicate_stockholm_msa(msa_for_templates)
+      msa_for_templates = parsers.remove_empty_columns_from_stockholm_msa(
+        msa_for_templates)
+
+      if self.template_searcher.input_format == 'sto':
+        pdb_templates_result = self.template_searcher.query(msa_for_templates)
+      elif self.template_searcher.input_format == 'a3m':
+        uniref90_msa_as_a3m = parsers.convert_stockholm_to_a3m(msa_for_templates)
+        pdb_templates_result = self.template_searcher.query(uniref90_msa_as_a3m)
+      else:
+        raise ValueError('Unrecognized template input format: '
+                       f'{self.template_searcher.input_format}')
+
+      with open(pdb_hits_out_path, 'w') as f:
+        f.write(pdb_templates_result)
+    else:
+      logging.info("loading pdb hits")
+      with open(pdb_hits_out_path, 'r') as f:
+        pdb_templates_result = f.read()
+    
+    pdb_template_hits = self.template_searcher.get_template_hits(
+        output_string=pdb_templates_result, input_sequence=input_sequence)
     templates_result = self.template_featurizer.get_templates(
         query_sequence=input_sequence,
         hits=pdb_template_hits)
+    template_features = templates_result.features
 
-    sequence_features = make_sequence_features(
-        sequence=input_sequence,
-        description=input_description,
-        num_res=num_res)
-
-    msa_features = make_msa_features((uniref90_msa, bfd_msa, mgnify_msa))
-
+    # print infomation and return
     logging.info('Uniref90 MSA size: %d sequences.', len(uniref90_msa))
     logging.info('BFD MSA size: %d sequences.', len(bfd_msa))
     logging.info('MGnify MSA size: %d sequences.', len(mgnify_msa))
@@ -240,4 +261,4 @@ class DataPipeline:
                  'templates and is later filtered to top 4): %d.',
                  templates_result.features['template_domain_names'].shape[0])
 
-    return {**sequence_features, **msa_features, **templates_result.features}
+    return {**sequence_features, **msa_features, **template_features}

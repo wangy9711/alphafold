@@ -21,6 +21,7 @@ import dataclasses
 import json
 import os
 import tempfile
+import pickle
 from typing import Mapping, MutableMapping, Sequence
 
 from absl import logging
@@ -219,14 +220,24 @@ class DataPipeline:
         all_seq_msa_features = self._all_seq_msa_features(chain_fasta_path,
                                                           chain_msa_output_dir)
         chain_features.update(all_seq_msa_features)
+
+    result_file = os.path.join(chain_msa_output_dir, 'chain_features.pkl')
+    with open(result_file, 'wb') as f:
+      pickle.dump(chain_features, f, protocol=4)
     return chain_features
 
   def _all_seq_msa_features(self, input_fasta_path, msa_output_dir):
     """Get MSA features for unclustered uniprot, for pairing."""
     out_path = os.path.join(msa_output_dir, 'uniprot_hits.sto')
-    result = pipeline.run_msa_tool(
-        self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
-        self.use_precomputed_msas)
+    if not os.path.isfile(out_path):
+      result = pipeline.run_msa_tool(
+          self._uniprot_msa_runner, input_fasta_path, out_path, 'sto',
+          self.use_precomputed_msas)
+    else:
+      logging.info("loading uniprot")
+      result = {}
+      with open(out_path, 'r') as f:
+        result['sto'] = f.read()
     msa = parsers.parse_stockholm(result['sto'])
     msa = msa.truncate(max_seqs=self._max_uniprot_hits)
     all_seq_features = pipeline.make_msa_features([msa])

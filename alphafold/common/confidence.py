@@ -103,7 +103,7 @@ def compute_predicted_aligned_error(
           aligned_distance_error_probs=aligned_confidence_probs))
   return {
       'aligned_confidence_probs': aligned_confidence_probs,
-      'predicted_aligned_error': predicted_aligned_error,
+      'predicted_aligned_error_val': predicted_aligned_error,
       'max_predicted_aligned_error': max_predicted_aligned_error,
   }
 
