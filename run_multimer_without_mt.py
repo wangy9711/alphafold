@@ -39,6 +39,7 @@ flags.DEFINE_string('output_dir', None, 'Path to a directory that will store the
 flags.DEFINE_string('param_dir', param_dir, 'Path to param database') 
 
 # Optional parameter
+flags.DEFINE_list('template_pdb_path', None, 'PBD template for chains.')
 flags.DEFINE_integer('recycle', 3, 'recycle times in model inference.')
 flags.DEFINE_boolean('use_gpu_relax', True, 'Use gpu to relax')
 
@@ -70,7 +71,8 @@ def predict_structure(
     data_pipeline:pipeline_without_mt.MultimerDataPipelineWithouMT,
     model_runners: Dict[str, model.RunModel],
     amber_relaxer: relax.AmberRelaxation,
-    random_seed: int):
+    random_seed: int,
+    pdb_template_path_list:list=None):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -87,7 +89,8 @@ def predict_structure(
     t_0 = time.time()
     feature_dict = data_pipeline.process(
         input_fasta_path=fasta_path,
-        msa_output_dir=msa_output_dir)
+        msa_output_dir=msa_output_dir,
+        pdb_template_path_list=pdb_template_path_list)
     timings['features'] = time.time() - t_0
 
     # Write out features as a pickled dictionary.
@@ -240,6 +243,7 @@ def main(argv):
   predict_structure(
       fasta_path=fasta_path,
       fasta_name=fasta_name,
+      pdb_template_path_list = FLAGS.template_pdb_path,
       output_dir_base=output_dir,
       data_pipeline=data_pipeline,
       model_runners=model_runners,

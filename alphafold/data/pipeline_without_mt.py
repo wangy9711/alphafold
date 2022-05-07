@@ -29,7 +29,7 @@ from alphafold.common import residue_constants
 from alphafold.common import protein
 from alphafold.data import msa_identifiers
 from alphafold.data import parsers
-from alphafold.data import templates
+from alphafold.data.mk_temp_features_from_pdb import make_template_features
 from alphafold.data import feature_processing
 from alphafold.data import msa_pairing
 import numpy as np
@@ -97,7 +97,7 @@ class DataPipelineWithoutMT:
     """Initializes the data pipeline."""
     pass
     
-  def process(self, input_fasta_path: str, msa_output_dir: str) -> FeatureDict:
+  def process(self, input_fasta_path: str, template_path:str = None) -> FeatureDict:
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
     input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
@@ -119,22 +119,9 @@ class DataPipelineWithoutMT:
     msa_features = make_msa_features([fake_msa])
 
     # make empty template features
-    empty_template_features = {
-          'template_aatype': np.zeros(
-              (1, num_res, len(residue_constants.restypes_with_x_and_gap)),
-              np.float32),
-          'template_all_atom_masks': np.zeros(
-              (1, num_res, residue_constants.atom_type_num), np.float32),
-          'template_all_atom_positions': np.zeros(
-              (1, num_res, residue_constants.atom_type_num, 3), np.float32),
-          'template_domain_names': np.array([''.encode()], dtype=np.object),
-          'template_sequence': np.array([''.encode()], dtype=np.object),
-          'template_sum_probs': np.array([0], dtype=np.float32)
-      }
+    template_features = make_template_features(input_sequence, template_path)
 
-
-
-    return {**sequence_features, **msa_features, **empty_template_features}
+    return {**sequence_features, **msa_features, **template_features}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -160,6 +147,24 @@ def _make_chain_id_map(*,
     chain_id_map[chain_id] = _FastaChain(
         sequence=sequence, description=description)
   return chain_id_map
+
+
+def _make_template_map(*,
+                       sequences: Sequence[str],
+                       template_paths: Sequence[str],
+                       ) -> Mapping[str, str]:
+  """Makes a mapping from chain ID to template."""
+  if len(sequences) != len(template_paths):
+    raise ValueError('sequences and template paths must have equal length. '
+                     f'Got {len(sequences)} != {len(template_paths)}.')
+  if len(sequences) > protein.PDB_MAX_CHAINS:
+    raise ValueError('Cannot process more chains than the PDB format supports. '
+                     f'Got {len(sequences)} chains.')
+  chain_template_map = {}
+  for chain_id, sequence, template_path in zip(
+      protein.PDB_CHAIN_IDS, sequences, template_paths):
+    chain_template_map[chain_id] = template_path
+  return chain_template_map
 
 
 @contextlib.contextmanager
@@ -292,7 +297,8 @@ class MultimerDataPipelineWithouMT:
       sequence: str,
       description: str,
       msa_output_dir: str,
-      is_homomer_or_monomer: bool) -> FeatureDict:
+      is_homomer_or_monomer: bool,
+      template_path:str = None) -> FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
     chain_msa_output_dir = os.path.join(msa_output_dir, chain_id)
@@ -303,7 +309,7 @@ class MultimerDataPipelineWithouMT:
                    chain_id, description)
       chain_features = self._monomer_data_pipeline.process(
           input_fasta_path=chain_fasta_path,
-          msa_output_dir=chain_msa_output_dir)
+          template_path = template_path)
 
       # We only construct the pairing features if there are 2 or more unique
       # sequences.
@@ -330,11 +336,16 @@ class MultimerDataPipelineWithouMT:
 
   def process(self,
               input_fasta_path: str,
-              msa_output_dir: str) -> FeatureDict:
+              msa_output_dir: str,
+              pdb_template_path_list:list=None) -> FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
     input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
+
+    template_map_dict = {}
+    if not (pdb_template_path_list is None):
+      template_map_dict = _make_template_map(sequences=input_seqs,template_paths=pdb_template_path_list)
 
     chain_id_map = _make_chain_id_map(sequences=input_seqs,
                                       descriptions=input_descs)
@@ -352,12 +363,19 @@ class MultimerDataPipelineWithouMT:
         all_chain_features[chain_id] = copy.deepcopy(
             sequence_features[fasta_chain.sequence])
         continue
+
+      if chain_id in template_map_dict.keys():
+        template_path = template_map_dict[chain_id]
+      else:
+        template_path = None
+
       chain_features = self._process_single_chain(
           chain_id=chain_id,
           sequence=fasta_chain.sequence,
           description=fasta_chain.description,
           msa_output_dir=msa_output_dir,
-          is_homomer_or_monomer=is_homomer_or_monomer)
+          is_homomer_or_monomer=is_homomer_or_monomer,
+          template_path = template_path)
 
       chain_features = convert_monomer_features(chain_features,
                                                 chain_id=chain_id)
