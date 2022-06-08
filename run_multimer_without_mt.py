@@ -1,4 +1,4 @@
-"""Full AlphaFold protein structure prediction script."""
+"""AlphaFold-Mutimer protein structure prediction without MSA."""
 import json
 import os
 import pathlib

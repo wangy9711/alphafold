@@ -1,4 +1,4 @@
-"""Full AlphaFold protein structure prediction script."""
+"""Use 2 template without MSA"""
 import json
 import os
 import pathlib
@@ -14,11 +14,7 @@ from absl import flags
 from absl import logging
 from alphafold.common import protein
 from alphafold.common import residue_constants
-from alphafold.data import pipeline
-from alphafold.data import pipeline_multimer
-from alphafold.data import templates
-from alphafold.data.tools import hhsearch
-from alphafold.data.tools import hmmsearch
+from alphafold.data import pipeline_without_mt
 from alphafold.model import config
 from alphafold.model import data
 from alphafold.model import model
@@ -32,10 +28,7 @@ import jax
 
 logging.set_verbosity(logging.INFO)
 
-single_data_dir = '/home/public/af2_database'
-multimer_data_dir = '/home/public/af2_database'
 param_dir = '/home/public/af2_database/params_new'
-
 
 # Required parameter
 # Input 
@@ -43,31 +36,13 @@ flags.DEFINE_string('input_fasta', None, 'Input fasta file')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will store the results.')
 
 # Database
-flags.DEFINE_string('single_data_dir', single_data_dir, 'Path to af2 database')      
-flags.DEFINE_string('multimer_data_dir', multimer_data_dir, 'Path to multimer database') 
 flags.DEFINE_string('param_dir', param_dir, 'Path to param database') 
 
 # Optional parameter
+flags.DEFINE_list('template_pdb_path', None, 'PBD template for chains.')
+flags.DEFINE_integer('template_pdb_num', 0, 'Number of PBD template for each chains.')
 flags.DEFINE_integer('recycle', 3, 'recycle times in model inference.')
-
 flags.DEFINE_boolean('use_gpu_relax', True, 'Use gpu to relax')
-
-# max template date
-flags.DEFINE_string('max_template_date', '2030-05-01', 'Maximum template release date '
-                    'to consider. Important if folding historical test sets.')
-# tools
-flags.DEFINE_string('jackhmmer_binary_path', 'jackhmmer',
-                    'Path to the JackHMMER executable.')
-flags.DEFINE_string('hhblits_binary_path', 'hhblits',
-                    'Path to the HHblits executable.')
-flags.DEFINE_string('hhsearch_binary_path', 'hhsearch',
-                    'Path to the HHsearch executable.')
-flags.DEFINE_string('hmmsearch_binary_path', 'hmmsearch',
-                    'Path to the hmmsearch executable.')
-flags.DEFINE_string('hmmbuild_binary_path', 'hmmbuild',
-                    'Path to the hmmbuild executable.')
-flags.DEFINE_string('kalign_binary_path', 'kalign',
-                    'Path to the Kalign executable.')
 
 # random seed
 flags.DEFINE_integer('seed', 0, 'seed for python reproducibility.')
@@ -94,10 +69,12 @@ def predict_structure(
     fasta_path: str,
     fasta_name: str,
     output_dir_base: str,
-    data_pipeline: Union[pipeline.DataPipeline, pipeline_multimer.DataPipeline],
+    data_pipeline:pipeline_without_mt.MultimerDataPipelineWithouMT,
     model_runners: Dict[str, model.RunModel],
     amber_relaxer: relax.AmberRelaxation,
-    random_seed: int):
+    random_seed: int,
+    pdb_template_path_list:list=None,
+    pdb_template_num:int=0):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -114,7 +91,9 @@ def predict_structure(
     t_0 = time.time()
     feature_dict = data_pipeline.process(
         input_fasta_path=fasta_path,
-        msa_output_dir=msa_output_dir)
+        msa_output_dir=msa_output_dir,
+        pdb_template_path_list=pdb_template_path_list,
+        pdb_template_num=pdb_template_num)
     timings['features'] = time.time() - t_0
 
     # Write out features as a pickled dictionary.
@@ -158,6 +137,11 @@ def predict_structure(
 
     plddt = prediction_result['plddt']
     ranking_confidences[model_name] = prediction_result['ranking_confidence']
+
+    # Save the model outputs.
+    result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
+    with open(result_output_path, 'wb') as f:
+      pickle.dump(prediction_result, f, protocol=4)
 
     # Add the predicted LDDT in the b-factor column.
     # Note that higher predicted LDDT value means higher model confidence.
@@ -229,51 +213,18 @@ def main(argv):
 
   output_dir = FLAGS.output_dir
 
-  single_data_dir = FLAGS.single_data_dir
-  multimer_data_dir = FLAGS.multimer_data_dir
   param_dir = FLAGS.param_dir
   
-  uniref90_database_path = os.path.join(single_data_dir, 'uniref90', 'uniref90.fasta')
-  mgnify_database_path = os.path.join(single_data_dir, 'mgnify', 'mgy_clusters.fa')
-  bfd_database_path = os.path.join(single_data_dir, 'bfd','bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt')
-  uniclust30_database_path = os.path.join(single_data_dir, 'uniclust30', 'uniclust30_2018_08', 'uniclust30_2018_08')
-  pdb70_database_path = os.path.join(single_data_dir, 'pdb70','pdb70')
+  monomer_data_pipeline = pipeline_without_mt.DataPipelineWithoutMT()
+  data_pipeline = pipeline_without_mt.MultimerDataPipelineWithouMT(monomer_data_pipeline=monomer_data_pipeline)
 
-  template_mmcif_dir = os.path.join(multimer_data_dir, 'pdb_mmcif', 'mmcif_files')
-  obsolete_pdbs_path = os.path.join(multimer_data_dir, 'pdb_mmcif', 'obsolete.dat')
-
-  template_searcher = hhsearch.HHSearch(
-      binary_path=FLAGS.hhsearch_binary_path,
-      databases=[pdb70_database_path])
-  template_featurizer = templates.HhsearchHitFeaturizer(
-      mmcif_dir=template_mmcif_dir,
-      max_template_date=FLAGS.max_template_date,
-      max_hits=MAX_TEMPLATE_HITS,
-      kalign_binary_path=FLAGS.kalign_binary_path,
-      release_dates_path=None,
-      obsolete_pdbs_path=obsolete_pdbs_path)
-  
-
-  data_pipeline = pipeline.DataPipeline(
-      jackhmmer_binary_path=FLAGS.jackhmmer_binary_path,
-      hhblits_binary_path=FLAGS.hhblits_binary_path,
-      uniref90_database_path=uniref90_database_path,
-      mgnify_database_path=mgnify_database_path,
-      bfd_database_path=bfd_database_path,
-      uniclust30_database_path=uniclust30_database_path,
-      small_bfd_database_path='',
-      template_searcher=template_searcher,
-      template_featurizer=template_featurizer,
-      use_small_bfd=False,
-      use_precomputed_msas=False)
 
   model_runners = {}
-  model_names = config.MODEL_PRESETS['monomer']
+  model_names = config.MODEL_PRESETS['multimer']
   for model_name in model_names:
     model_config = config.model_config(model_name)
-    model_config.data.eval.num_ensemble = NUM_ENSEMBLE
+    model_config.model.num_ensemble_eval = NUM_ENSEMBLE
     model_config.model.num_recycle=FLAGS.recycle
-    model_config.data.num_recycle=FLAGS.recycle
     
     model_params = data.get_model_haiku_params(
         model_name=model_name, data_dir=param_dir)
@@ -295,6 +246,8 @@ def main(argv):
   predict_structure(
       fasta_path=fasta_path,
       fasta_name=fasta_name,
+      pdb_template_path_list = FLAGS.template_pdb_path,
+      pdb_template_num = FLAGS.template_pdb_num,
       output_dir_base=output_dir,
       data_pipeline=data_pipeline,
       model_runners=model_runners,

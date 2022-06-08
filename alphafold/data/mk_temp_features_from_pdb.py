@@ -1,5 +1,7 @@
+from importlib.resources import path
 from alphafold.common import residue_constants
 import numpy as np
+import os
 
 restype_3to1 = {
     'ALA': 'A' ,
@@ -173,58 +175,87 @@ def make_empty_features(num_res):
     
 
 def make_template_features(input_seq, input_pdb):
-    empty_template = make_empty_features(len(input_seq))
+    num_res  =len(input_seq)
+    empty_template = make_empty_features(num_res)
     if input_pdb is None:
+        print(f'Use empty template features')
         return empty_template
 
-    template_seq_list, template_atom_list = parse_pdb(input_pdb)
-    template_seq = ''.join(template_seq_list)
-    align_list = align(input_seq, template_seq)
-    insert_count = 0
-    for item in align_list:
-        if item == -1:
-            insert_count += 1
-    
-    if insert_count/len(input_seq) > 0.5:
-        raise ValueError(f'The template is too short, the align ratio is {1-insert_count/len(input_seq)}')
-
-    templates_all_atom_positions = []
-    templates_all_atom_masks = []
-
-    for _ in input_seq:
-    # Residues in the query_sequence that are not in the template_sequence:
-        templates_all_atom_positions.append(
-            np.zeros((residue_constants.atom_type_num, 3)))
-        templates_all_atom_masks.append(np.zeros(residue_constants.atom_type_num))
-
-    atom_list = []
-    template_align_seq = ''
-    for index in align_list:
-        if index == -1:
-            atom_list.append({})
-            template_align_seq = template_align_seq+'-'
-        else:
-            atom_list.append(template_atom_list[index])
-            template_align_seq = template_align_seq + template_seq_list[index]
-
-    list2atom37(atom_list, templates_all_atom_positions, templates_all_atom_masks)
-
-  # Alanine (AA with the lowest number of atoms) has 5 atoms (C, CA, CB, N, O).
-    if np.sum(templates_all_atom_masks) < 5:
-        raise ValueError('Template all atom mask was all zeros:')
-
-    output_templates_sequence = template_align_seq
+    template_all_atom_positions = []
+    template_all_atom_masks = []
+    template_sequence = []
+    template_aatype = []
+    template_domain_names = []
+    template_sum_probs = []
 
 
-    templates_aatype = residue_constants.sequence_to_onehot(output_templates_sequence, residue_constants.HHBLITS_AA_TO_ID)
+    for pdb_path in input_pdb:
+        if not os.path.isfile(pdb_path):
+            print(f'Cant find pdb file: {pdb_path}. Use empty template features')
+            template_aatype.append(np.zeros((num_res, len(residue_constants.restypes_with_x_and_gap)),np.float32))
+            template_all_atom_masks.append(np.zeros((num_res, residue_constants.atom_type_num), np.float32))
+            template_all_atom_positions.append(np.zeros((num_res, residue_constants.atom_type_num, 3), np.float32))
+            template_domain_names.append(np.array(''.encode(), dtype=np.object))
+            template_sequence.append(np.array(''.encode(), dtype=np.object))
+            template_sum_probs.append(0.0)
+            continue
+
+        print(f'Use pdb template: {pdb_path}')
+        template_seq_list, template_atom_list = parse_pdb(pdb_path)
+        template_seq = ''.join(template_seq_list)
+        align_list = align(input_seq, template_seq)
+        insert_count = 0
+        for item in align_list:
+            if item == -1:
+                insert_count += 1
+        
+        if insert_count/len(input_seq) > 0.5:
+            raise ValueError(f'The template is too short, the align ratio is {1-insert_count/len(input_seq)}')
+
+        templates_all_atom_positions = []
+        templates_all_atom_masks = []
+
+        for _ in input_seq:
+        # Residues in the query_sequence that are not in the template_sequence:
+            templates_all_atom_positions.append(
+                np.zeros((residue_constants.atom_type_num, 3)))
+            templates_all_atom_masks.append(np.zeros(residue_constants.atom_type_num))
+
+        atom_list = []
+        template_align_seq = ''
+        for index in align_list:
+            if index == -1:
+                atom_list.append({})
+                template_align_seq = template_align_seq+'-'
+            else:
+                atom_list.append(template_atom_list[index])
+                template_align_seq = template_align_seq + template_seq_list[index]
+
+        list2atom37(atom_list, templates_all_atom_positions, templates_all_atom_masks)
+
+        # Alanine (AA with the lowest number of atoms) has 5 atoms (C, CA, CB, N, O).
+        if np.sum(templates_all_atom_masks) < 5:
+            raise ValueError('Template all atom mask was all zeros:')
+
+        output_templates_sequence = template_align_seq
+
+
+        templates_aatype = residue_constants.sequence_to_onehot(output_templates_sequence, residue_constants.HHBLITS_AA_TO_ID)
+        template_aatype.append(templates_aatype)
+        template_all_atom_masks.append(templates_all_atom_masks)
+        template_all_atom_positions.append(templates_all_atom_positions)
+        template_domain_names.append(np.array(f'custom template_{pdb_path}'.encode(), dtype=np.object))
+        template_sequence.append(np.array(output_templates_sequence.encode(), dtype=np.object))
+        template_sum_probs.append(0.0)
+
     return {
-            'template_all_atom_positions': np.array([templates_all_atom_positions], np.float32),
-            'template_all_atom_masks': np.array([templates_all_atom_masks], np.float32),
-            'template_sequence': np.array([output_templates_sequence.encode()],dtype=np.object),
-            'template_aatype': np.array([templates_aatype], np.float32),
-            'template_domain_names': np.array([f'custom template'.encode()], dtype=np.object),
-            'template_sum_probs':np.array([[0.0]], dtype=np.float32)
+            'template_all_atom_positions': np.array(template_all_atom_positions, np.float32),
+            'template_all_atom_masks': np.array(template_all_atom_masks, np.float32),
+            'template_sequence': np.array(template_sequence,dtype=np.object),
+            'template_aatype': np.array(template_aatype, np.float32),
+            'template_domain_names': np.array(template_domain_names, dtype=np.object),
+            'template_sum_probs':np.array(template_sum_probs, dtype=np.float32)
         }
 
 if __name__ == '__main__':
-    t = make_template_features('GMTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHHYREQIKRVKDSEDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQGVDDAFYTLVREIRKHKEK','test_pdb.pdb')
+    t = make_template_features('GMTEYKLVVVGAGGVGKSALTIQLIQNHFVDEYDPTIEDSYRKQVVIDGETCLLDILDTAGQEEYSAMRDQYMRTGEGFLCVFAINNTKSFEDIHHYREQIKRVKDSEDVPMVLVGNKCDLPSRTVDTKQAQDLARSYGIPFIETSAKTRQGVDDAFYTLVREIRKHKEK',['test_pdb.pdb'])

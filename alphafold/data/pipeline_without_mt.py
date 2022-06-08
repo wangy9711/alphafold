@@ -97,7 +97,7 @@ class DataPipelineWithoutMT:
     """Initializes the data pipeline."""
     pass
     
-  def process(self, input_fasta_path: str, template_path:str = None) -> FeatureDict:
+  def process(self, input_fasta_path: str, template_path:list = None) -> FeatureDict:
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
     input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
@@ -152,18 +152,23 @@ def _make_chain_id_map(*,
 def _make_template_map(*,
                        sequences: Sequence[str],
                        template_paths: Sequence[str],
+                       pdb_template_num: int,
                        ) -> Mapping[str, str]:
   """Makes a mapping from chain ID to template."""
-  if len(sequences) != len(template_paths):
+  if len(sequences)*pdb_template_num != len(template_paths):
     raise ValueError('sequences and template paths must have equal length. '
                      f'Got {len(sequences)} != {len(template_paths)}.')
   if len(sequences) > protein.PDB_MAX_CHAINS:
     raise ValueError('Cannot process more chains than the PDB format supports. '
                      f'Got {len(sequences)} chains.')
   chain_template_map = {}
-  for chain_id, sequence, template_path in zip(
-      protein.PDB_CHAIN_IDS, sequences, template_paths):
-    chain_template_map[chain_id] = template_path
+  seq_count = len(sequences)
+  for i in range(seq_count):
+      chain_id = protein.PDB_CHAIN_IDS[i]
+      chain_template_map[chain_id] = [template_paths[i]]
+      for j in range(1,pdb_template_num):
+          chain_template_map[chain_id].append(template_paths[i+j*seq_count])
+    
   return chain_template_map
 
 
@@ -298,7 +303,7 @@ class MultimerDataPipelineWithouMT:
       description: str,
       msa_output_dir: str,
       is_homomer_or_monomer: bool,
-      template_path:str = None) -> FeatureDict:
+      template_path:list = None) -> FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
     chain_msa_output_dir = os.path.join(msa_output_dir, chain_id)
@@ -337,7 +342,8 @@ class MultimerDataPipelineWithouMT:
   def process(self,
               input_fasta_path: str,
               msa_output_dir: str,
-              pdb_template_path_list:list=None) -> FeatureDict:
+              pdb_template_path_list:list=None,
+              pdb_template_num:int=1) -> FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
@@ -345,7 +351,7 @@ class MultimerDataPipelineWithouMT:
 
     template_map_dict = {}
     if not (pdb_template_path_list is None):
-      template_map_dict = _make_template_map(sequences=input_seqs,template_paths=pdb_template_path_list)
+      template_map_dict = _make_template_map(sequences=input_seqs,template_paths=pdb_template_path_list,pdb_template_num=pdb_template_num)
 
     chain_id_map = _make_chain_id_map(sequences=input_seqs,
                                       descriptions=input_descs)
