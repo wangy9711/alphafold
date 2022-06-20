@@ -394,6 +394,6 @@ class MultimerDataPipelineWithouMT:
         all_chain_features=all_chain_features)
 
     # Pad MSA to avoid zero-sized extra_msa.
-    np_example = pad_msa(np_example, 512)
+    np_example = pad_msa(np_example, 2)
 
     return np_example

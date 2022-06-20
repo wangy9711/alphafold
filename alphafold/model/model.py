@@ -16,6 +16,7 @@
 from typing import Any, Mapping, Optional, Union
 
 from absl import logging
+from alphafold import model
 from alphafold.common import confidence
 from alphafold.model import features
 from alphafold.model import modules
@@ -66,17 +67,40 @@ class RunModel:
 
   def __init__(self,
                config: ml_collections.ConfigDict,
-               params: Optional[Mapping[str, Mapping[str, np.ndarray]]] = None):
+               params: Optional[Mapping[str, Mapping[str, np.ndarray]]] = None,
+               fast_mode: bool=False):
     self.config = config
     self.params = params
     self.multimer_mode = config.model.global_config.multimer_mode
-
+    self.fast_mode = fast_mode
     if self.multimer_mode:
-      def _forward_fn(batch):
-        model = modules_multimer.AlphaFold(self.config.model)
-        return model(
-            batch,
-            is_training=False)
+      if self.fast_mode:
+        def _forward_fn(batch):
+          model_1 = modules_multimer.AlphaFold(self.config.model)
+          model_2 = modules_multimer.AlphaFold(self.config.model)
+          model_3 = modules_multimer.AlphaFold(self.config.model)
+          model_4 = modules_multimer.AlphaFold(self.config.model)
+          model_5 = modules_multimer.AlphaFold(self.config.model)
+          outputs_1 = model_1(batch, is_training=False)
+          outputs_2 = model_2(batch, is_training=False)
+          outputs_3 = model_3(batch, is_training=False)
+          outputs_4 = model_4(batch, is_training=False)
+          outputs_5 = model_5(batch, is_training=False)
+          return_dict = {
+            "model_1":outputs_1,
+            "model_2":outputs_2,
+            "model_3":outputs_3,
+            "model_4":outputs_4,
+            "model_5":outputs_5,
+          }
+          return return_dict
+          
+      else:
+        def _forward_fn(batch):
+          model = modules_multimer.AlphaFold(self.config.model)
+          return model(
+              batch,
+              is_training=False)
     else:
       def _forward_fn(batch):
         model = modules.AlphaFold(self.config.model)
@@ -170,8 +194,16 @@ class RunModel:
     # already happening when computing get_confidence_metrics, and this ensures
     # all outputs are blocked on.
     jax.tree_map(lambda x: x.block_until_ready(), result)
-    result.update(
-        get_confidence_metrics(result, multimer_mode=self.multimer_mode))
-    logging.info('Output shape was %s',
-                 tree.map_structure(lambda x: x.shape, result))
-    return result
+
+    if self.fast_mode:
+      results = {}
+      for model_name, output in result.items():
+        output.update(get_confidence_metrics(output, multimer_mode=self.multimer_mode))
+        results[model_name] = output
+      return results
+    else:
+      result.update(
+          get_confidence_metrics(result, multimer_mode=self.multimer_mode))
+      logging.info('Output shape was %s',
+                  tree.map_structure(lambda x: x.shape, result))
+      return result
