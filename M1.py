@@ -1,4 +1,4 @@
-"""Use 2 template without MSA"""
+"""merge all model"""
 import json
 import os
 import pathlib

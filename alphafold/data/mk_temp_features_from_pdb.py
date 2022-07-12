@@ -102,9 +102,28 @@ def list2atom37(atom_list, templates_all_atom_positions, templates_all_atom_mask
                 templates_all_atom_positions[index][residue_constants.atom_order[atom]][2] = coordinate[2]
                 templates_all_atom_masks[index][residue_constants.atom_order[atom]] = 1.0
             
+        index += 1
+
+def list2atom37_ala(atom_list, templates_all_atom_positions, templates_all_atom_masks):
+    # input: 
+    # [[atoms in res1], [atoms in res2]]
+    # templates_all_atom_positions : list of all atoms. shape: [res, 37, 3]
+    # templates_all_atom_masks: list of all atoms. shape: [res, 37]
+    ala_atom_list = ['C', 'CA', 'CB', 'N', 'O']
+    index = 0
+    for item in atom_list:
+        # item is a dict
+        for atom, coordinate in item.items():
+            if atom not in ala_atom_list:
+                continue
+            if atom in residue_constants.atom_order.keys():
+                templates_all_atom_positions[index][residue_constants.atom_order[atom]][0] = coordinate[0]
+                templates_all_atom_positions[index][residue_constants.atom_order[atom]][1] = coordinate[1]
+                templates_all_atom_positions[index][residue_constants.atom_order[atom]][2] = coordinate[2]
+                templates_all_atom_masks[index][residue_constants.atom_order[atom]] = 1.0
         
         index += 1
-    
+
 def align(input_seq, template_seq):
     l1 = len(input_seq)
     l2 = len(template_seq)
@@ -174,7 +193,7 @@ def make_empty_features(num_res):
     return empty_template_features
     
 
-def make_template_features(input_seq, input_pdb):
+def make_template_features(input_seq, input_pdb,use_ala_template):
     num_res  =len(input_seq)
     empty_template = make_empty_features(num_res)
     if input_pdb is None:
@@ -231,14 +250,19 @@ def make_template_features(input_seq, input_pdb):
                 atom_list.append(template_atom_list[index])
                 template_align_seq = template_align_seq + template_seq_list[index]
 
-        list2atom37(atom_list, templates_all_atom_positions, templates_all_atom_masks)
+        if use_ala_template:
+            list2atom37_ala(atom_list, templates_all_atom_positions, templates_all_atom_masks)
+            output_templates_sequence = ''
+            for item in template_align_seq:
+                if item == '-':
+                    output_templates_sequence = output_templates_sequence + '-'
+                else:
+                    output_templates_sequence = output_templates_sequence + 'A'
 
-        # Alanine (AA with the lowest number of atoms) has 5 atoms (C, CA, CB, N, O).
-        if np.sum(templates_all_atom_masks) < 5:
-            raise ValueError('Template all atom mask was all zeros:')
-
-        output_templates_sequence = template_align_seq
-
+            
+        else:
+            list2atom37(atom_list, templates_all_atom_positions, templates_all_atom_masks)
+            output_templates_sequence = template_align_seq
 
         templates_aatype = residue_constants.sequence_to_onehot(output_templates_sequence, residue_constants.HHBLITS_AA_TO_ID)
         template_aatype.append(templates_aatype)

@@ -1,4 +1,4 @@
-"""Use 2 template without MSA"""
+"""remove amber relax"""
 import json
 import os
 import pathlib

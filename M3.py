@@ -1,4 +1,4 @@
-"""Use 2 template without MSA"""
+"""recycle=1"""
 import json
 import os
 import pathlib

@@ -97,7 +97,7 @@ class DataPipelineWithoutMT:
     """Initializes the data pipeline."""
     pass
     
-  def process(self, input_fasta_path: str, template_path:list = None) -> FeatureDict:
+  def process(self, input_fasta_path: str, template_path:list = None,use_ala_template:bool=False) -> FeatureDict:
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
     input_seqs, input_descs = parsers.parse_fasta(input_fasta_str)
@@ -119,7 +119,7 @@ class DataPipelineWithoutMT:
     msa_features = make_msa_features([fake_msa])
 
     # make empty template features
-    template_features = make_template_features(input_sequence, template_path)
+    template_features = make_template_features(input_sequence, template_path,use_ala_template)
 
     return {**sequence_features, **msa_features, **template_features}
 
@@ -303,7 +303,8 @@ class MultimerDataPipelineWithouMT:
       description: str,
       msa_output_dir: str,
       is_homomer_or_monomer: bool,
-      template_path:list = None) -> FeatureDict:
+      template_path:list = None,
+      use_ala_template:bool=False) -> FeatureDict:
     """Runs the monomer pipeline on a single chain."""
     chain_fasta_str = f'>chain_{chain_id}\n{sequence}\n'
     chain_msa_output_dir = os.path.join(msa_output_dir, chain_id)
@@ -314,7 +315,8 @@ class MultimerDataPipelineWithouMT:
                    chain_id, description)
       chain_features = self._monomer_data_pipeline.process(
           input_fasta_path=chain_fasta_path,
-          template_path = template_path)
+          template_path = template_path,
+          use_ala_template=use_ala_template)
 
       # We only construct the pairing features if there are 2 or more unique
       # sequences.
@@ -343,7 +345,8 @@ class MultimerDataPipelineWithouMT:
               input_fasta_path: str,
               msa_output_dir: str,
               pdb_template_path_list:list=None,
-              pdb_template_num:int=1) -> FeatureDict:
+              pdb_template_num:int=1,
+              use_ala_template:bool=False) -> FeatureDict:
     """Runs alignment tools on the input sequences and creates features."""
     with open(input_fasta_path) as f:
       input_fasta_str = f.read()
@@ -381,7 +384,8 @@ class MultimerDataPipelineWithouMT:
           description=fasta_chain.description,
           msa_output_dir=msa_output_dir,
           is_homomer_or_monomer=is_homomer_or_monomer,
-          template_path = template_path)
+          template_path = template_path,
+          use_ala_template=use_ala_template)
 
       chain_features = convert_monomer_features(chain_features,
                                                 chain_id=chain_id)

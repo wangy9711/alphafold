@@ -1,4 +1,4 @@
-"""MSA=2"""
+"""use ala template"""
 import json
 import os
 import pathlib
@@ -42,8 +42,10 @@ flags.DEFINE_string('param_dir', param_dir, 'Path to param database')
 # Optional parameter
 flags.DEFINE_list('template_pdb_path', None, 'PBD template for chains.')
 flags.DEFINE_integer('template_pdb_num', 0, 'Number of PBD template for each chains.')
+flags.DEFINE_boolean('use_ala_template', False, 'Use template with all ALA residue.')
 flags.DEFINE_integer('recycle', 0, 'recycle times in model inference.')
 flags.DEFINE_boolean('use_gpu_relax', True, 'Use gpu to relax')
+
 
 # random seed
 flags.DEFINE_integer('seed', 0, 'seed for python reproducibility.')
@@ -102,10 +104,10 @@ def predict_structure(
     output_dir_base: str,
     data_pipeline:pipeline_without_mt.MultimerDataPipelineWithouMT,
     model_runner: model.RunModel,
-    amber_relaxer: relax.AmberRelaxation,
     random_seed: int,
     pdb_template_path_list:list=None,
-    pdb_template_num:int=0):
+    pdb_template_num:int=0,
+    use_ala_template:bool=False):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -125,7 +127,8 @@ def predict_structure(
         input_fasta_path=fasta_path,
         msa_output_dir=msa_output_dir,
         pdb_template_path_list=pdb_template_path_list,
-        pdb_template_num=pdb_template_num)
+        pdb_template_num=pdb_template_num,
+        use_ala_template=use_ala_template)
     timings['features'] = time.time() - t_0
 
     # Write out features as a pickled dictionary.
@@ -139,7 +142,6 @@ def predict_structure(
     timings['features'] = time.time() - t_0
 
   unrelaxed_pdbs = {}
-  relaxed_pdbs = {}
   ranking_confidences = {}
   t_0 = time.time()
   processed_feature_dict = model_runner.process_features(feature_dict, random_seed=random_seed)
@@ -174,25 +176,6 @@ def predict_structure(
     with open(unrelaxed_pdb_path, 'w') as f:
       f.write(unrelaxed_pdbs[model_name])
 
-    if amber_relaxer:
-      # Relax the prediction.
-      t_0 = time.time()
-      try:
-        relaxed_pdb_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)
-      except:
-        logging.warning(f'{fasta_name} in {model_name} relaxed failed!')
-        relaxed_pdb_str = unrelaxed_pdbs[model_name]
-      timings[f'relax_{model_name}'] = time.time() - t_0
-
-      relaxed_pdbs[model_name] = relaxed_pdb_str
-
-      # Save the relaxed PDB.
-      relaxed_output_path = os.path.join(
-          output_dir, f'relaxed_{model_name}.pdb')
-      with open(relaxed_output_path, 'w') as f:
-        f.write(relaxed_pdb_str)
-  
-  
   # Rank by model confidence and write out relaxed PDBs in rank order.
   ranked_order = []
   for idx, (model_name, _) in enumerate(
@@ -200,10 +183,7 @@ def predict_structure(
     ranked_order.append(model_name)
     ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
     with open(ranked_output_path, 'w') as f:
-      if amber_relaxer:
-        f.write(relaxed_pdbs[model_name])
-      else:
-        f.write(unrelaxed_pdbs[model_name])
+      f.write(unrelaxed_pdbs[model_name])
 
   ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
   with open(ranking_output_path, 'w') as f:
@@ -232,14 +212,6 @@ def main(argv):
   
   model_runner = make_model_runnner(NUM_ENSEMBLE, FLAGS.recycle, param_dir)
 
-  amber_relaxer = relax.AmberRelaxation(
-    max_iterations=RELAX_MAX_ITERATIONS,
-    tolerance=RELAX_ENERGY_TOLERANCE,
-    stiffness=RELAX_STIFFNESS,
-    exclude_residues=RELAX_EXCLUDE_RESIDUES,
-    max_outer_iterations=RELAX_MAX_OUTER_ITERATIONS,
-    use_gpu=FLAGS.use_gpu_relax)
-
   for item in os.listdir(FLAGS.input_fasta_dir):
     fasta_path = os.path.join(FLAGS.input_fasta_dir, item)
     fasta_name = pathlib.Path(fasta_path).stem
@@ -248,10 +220,10 @@ def main(argv):
         fasta_name=fasta_name,
         pdb_template_path_list = FLAGS.template_pdb_path,
         pdb_template_num = FLAGS.template_pdb_num,
+        use_ala_template = FLAGS.use_ala_template,
         output_dir_base=output_dir,
         data_pipeline=data_pipeline,
         model_runner=model_runner,
-        amber_relaxer=None,
         random_seed=random_seed)
 
 
