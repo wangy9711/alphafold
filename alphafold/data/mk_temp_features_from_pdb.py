@@ -214,7 +214,7 @@ def make_template_features(input_seq, input_pdb,use_ala_template):
             template_aatype.append(np.zeros((num_res, len(residue_constants.restypes_with_x_and_gap)),np.float32))
             template_all_atom_masks.append(np.zeros((num_res, residue_constants.atom_type_num), np.float32))
             template_all_atom_positions.append(np.zeros((num_res, residue_constants.atom_type_num, 3), np.float32))
-            template_domain_names.append(np.array(''.encode(), dtype=np.object))
+            template_domain_names.append(''.encode())
             template_sequence.append(np.array(''.encode(), dtype=np.object))
             template_sum_probs.append(0.0)
             continue
@@ -268,7 +268,7 @@ def make_template_features(input_seq, input_pdb,use_ala_template):
         template_aatype.append(templates_aatype)
         template_all_atom_masks.append(templates_all_atom_masks)
         template_all_atom_positions.append(templates_all_atom_positions)
-        template_domain_names.append(np.array(f'custom template_{pdb_path}'.encode(), dtype=np.object))
+        template_domain_names.append(f'custom template_{pdb_path}'.encode())
         template_sequence.append(np.array(output_templates_sequence.encode(), dtype=np.object))
         template_sum_probs.append(0.0)
 

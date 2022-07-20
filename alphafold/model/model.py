@@ -102,13 +102,27 @@ class RunModel:
               batch,
               is_training=False)
     else:
-      def _forward_fn(batch):
-        model = modules.AlphaFold(self.config.model)
-        return model(
-            batch,
-            is_training=False,
-            compute_loss=False,
-            ensemble_representations=True)
+      if self.fast_mode:
+        def _forward_fn(batch):
+          model_1 = modules.AlphaFold(self.config.model)
+          model_2 = modules.AlphaFold(self.config.model)
+         
+          outputs_1 = model_1(batch, is_training=False,compute_loss=False, ensemble_representations=True)
+          outputs_2 = model_2(batch, is_training=False,compute_loss=False, ensemble_representations=True)
+
+          return_dict = {
+            "model_1":outputs_1,
+            "model_2":outputs_2,
+          }
+          return return_dict
+      else:
+        def _forward_fn(batch):
+          model = modules.AlphaFold(self.config.model)
+          return model(
+              batch,
+              is_training=False,
+              compute_loss=False,
+              ensemble_representations=True)
 
     self.apply = jax.jit(hk.transform(_forward_fn).apply)
     self.init = jax.jit(hk.transform(_forward_fn).init)
