@@ -32,9 +32,9 @@ import jax
 
 logging.set_verbosity(logging.INFO)
 
-single_data_dir = '/home/public/af2_database'
-multimer_data_dir = '/home/public/af2_database'
-param_dir = '/home/public/af2_database/params_new'
+single_data_dir = '/mnt/data/public/af2_database'
+multimer_data_dir = '/mnt/data/public/af2_database'
+param_dir = '/mnt/data/public/af2_database/new_params'
 
 
 # Required parameter

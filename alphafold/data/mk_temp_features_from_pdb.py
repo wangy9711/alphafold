@@ -54,18 +54,17 @@ def parse_pdb(input_pdb):
         res3 = line[17:20].replace(' ', '')
         chain = line[20:22].replace(' ', '')
         index = line[22:27].replace(' ', '')
-        coor = line[27:55]
-        coor_list = coor.split(' ')
+        coor_list = [line[27:38],line[38:46],line[46:55]]
         coor_list_float = []
         for item in coor_list:
             if item!='':
                 try:
                     coor_list_float.append(float(item))
                 except:
-                    raise ValueError(f'Found an unknown coordinate:{coor} in {line} of {input_pdb}!')
+                    raise ValueError(f'Found an unknown coordinate:{item} in {line} of {input_pdb}!')
         
         if len(coor_list_float)!=3:
-            raise ValueError(f'Found an unknown coordinate:{coor} in {line} of {input_pdb}!')
+            raise ValueError(f'Found an unknown coordinate:{coor_list} in {line} of {input_pdb}!')
 
         if chain != last_chain :
             if last_chain != '':
@@ -228,7 +227,7 @@ def make_template_features(input_seq, input_pdb,use_ala_template):
             if item == -1:
                 insert_count += 1
         
-        if insert_count/len(input_seq) > 0.5:
+        if insert_count/len(input_seq) > 0.8:
             raise ValueError(f'The template is too short, the align ratio is {1-insert_count/len(input_seq)}')
 
         templates_all_atom_positions = []

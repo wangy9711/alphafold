@@ -1,5 +1,4 @@
-"""Full AlphaFold protein structure prediction script."""
-from curses import flash
+"""MSA=2"""
 import json
 import os
 import pathlib
@@ -8,6 +7,7 @@ import random
 import shutil
 import sys
 import time
+from tkinter.tix import Tree
 from typing import Dict, Union, Optional
 
 from absl import app
@@ -29,25 +29,22 @@ import jax
 
 logging.set_verbosity(logging.INFO)
 
-param_dir = '/mnt/data/public/af2_database/new_params'
-
+param_dir = '/mnt/data/public/af2_database/params'
 
 # Required parameter
 # Input 
 flags.DEFINE_string('input_fasta', None, 'Input fasta file')
-flags.DEFINE_string('input_fasta_dir', None, 'Input fasta file')
+flags.DEFINE_string('input_fasta_dir', None, 'Input fasta file dir')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will store the results.')
 
 # Database
 flags.DEFINE_string('param_dir', param_dir, 'Path to param database') 
 
 # Optional parameter
-flags.DEFINE_list('pdb_template_path', None, 'PBD template for chains.')
-flags.DEFINE_integer('recycle', 3, 'recycle times in model inference.')
-flags.DEFINE_boolean('amber_relax', True, 'Use Amber to relax')
+flags.DEFINE_list('template_pdb_path', None, 'PBD template for chains.')
+flags.DEFINE_integer('template_pdb_num', 0, 'Number of PBD template for each chains.')
+flags.DEFINE_integer('recycle', 0, 'recycle times in model inference.')
 flags.DEFINE_boolean('use_gpu_relax', True, 'Use gpu to relax')
-
-# tools
 
 # random seed
 flags.DEFINE_integer('seed', 0, 'seed for python reproducibility.')
@@ -70,40 +67,46 @@ def set_device_seed(seed):
   tf.random.set_seed(seed)
 
 def make_model_runnner(num_ensemble, num_recycle, param_dir):
-  model_names = config.MODEL_PRESETS['monomer']
+  model_names = config.MODEL_PRESETS['multimer']
   model_config = config.model_config(model_names[0])
-  model_config.data.eval.num_ensemble = num_ensemble
+  model_config.model.num_ensemble_eval = num_ensemble
   model_config.model.num_recycle=num_recycle
-  model_config.data.common.num_recycle=num_recycle
-  model_config.data.num_recycle=num_recycle
-  model_config.data.common.max_extra_msa = 1
-  model_config.data.eval.max_templates = 1
-  model_config.data.eval.max_msa_clusters = 2
-
-  #model_config.model.embeddings_and_evoformer.num_extra_msa = 1
-  #model_config.model.embeddings_and_evoformer.num_msa = 1
+  model_config.model.embeddings_and_evoformer.num_extra_msa = 1
+  model_config.model.embeddings_and_evoformer.num_msa = 1
 
   param_1 = data.get_model_haiku_params(model_names[0], param_dir)
   param_2 = data.get_model_haiku_params(model_names[1], param_dir)
- 
+  param_3 = data.get_model_haiku_params(model_names[2], param_dir)
+  param_4 = data.get_model_haiku_params(model_names[3], param_dir)
+  param_5 = data.get_model_haiku_params(model_names[4], param_dir)
 
   for k,v in param_2.items():
     param_1[k[:9] + '_1' + k[9:]] = v
     
+  for k,v in param_3.items():
+    param_1[k[:9] + '_2' + k[9:]] = v
+
+  for k,v in param_4.items():
+    param_1[k[:9] + '_3' + k[9:]] = v
+
+  for k,v in param_5.items():
+    param_1[k[:9] + '_4' + k[9:]] = v
     
   model_runner = model.RunModel(model_config, params=param_1, fast_mode=True)
   return model_runner
+
 
 
 def predict_structure(
     fasta_path: str,
     fasta_name: str,
     output_dir_base: str,
-    data_pipeline: pipeline_without_mt.DataPipelineWithoutMT,
-    model_runner: Dict[str, model.RunModel],
+    data_pipeline:pipeline_without_mt.MultimerDataPipelineWithouMT,
+    model_runner: model.RunModel,
     amber_relaxer: relax.AmberRelaxation,
     random_seed: int,
-    pdb_template_path_list:list=None):
+    pdb_template_path_list:list=None,
+    pdb_template_num:int=0):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -121,7 +124,9 @@ def predict_structure(
     t_0 = time.time()
     feature_dict = data_pipeline.process(
         input_fasta_path=fasta_path,
-        template_path=pdb_template_path_list)
+        msa_output_dir=msa_output_dir,
+        pdb_template_path_list=pdb_template_path_list,
+        pdb_template_num=pdb_template_num)
     timings['features'] = time.time() - t_0
 
     # Write out features as a pickled dictionary.
@@ -137,17 +142,15 @@ def predict_structure(
   unrelaxed_pdbs = {}
   relaxed_pdbs = {}
   ranking_confidences = {}
-
-  # run the models
   t_0 = time.time()
   processed_feature_dict = model_runner.process_features(feature_dict, random_seed=random_seed)
   timings[f'process_features'] = time.time() - t_0
   t_0 = time.time()
   all_results = model_runner.predict(processed_feature_dict,random_seed=random_seed)
   timings[f'predict_and_compile'] = time.time() - t_0
-  logging.info('Total JAX model on %s predict time (includes compilation time, see --benchmark): %.1fs',fasta_name, time.time() - t_0)
+  logging.info('Total JAX model on %s predict time (includes compilation time, see --benchmark): %.1fs',
+        fasta_name, time.time() - t_0)
 
-  # Run the models.
   for model_name, prediction_result in all_results.items():
     # Save the model outputs.
     #result_output_path = os.path.join(output_dir, f'result_{model_name}.pkl')
@@ -213,6 +216,7 @@ def predict_structure(
   timings_output_path = os.path.join(output_dir, 'timings.json')
   with open(timings_output_path, 'w') as f:
     f.write(json.dumps(timings, indent=4))
+  
 
 def main(argv):
   if len(argv) > 1:
@@ -221,53 +225,61 @@ def main(argv):
   # Check for duplicate FASTA file names.
   random_seed = FLAGS.seed
   set_device_seed(random_seed)
+
   output_dir = FLAGS.output_dir
   param_dir = FLAGS.param_dir
-
   monomer_data_pipeline = pipeline_without_mt.DataPipelineWithoutMT()
+  data_pipeline = pipeline_without_mt.MultimerDataPipelineWithouMT(monomer_data_pipeline=monomer_data_pipeline)
+  
   model_runner = make_model_runnner(NUM_ENSEMBLE, FLAGS.recycle, param_dir)
-  if FLAGS.amber_relax:
-    amber_relaxer = relax.AmberRelaxation(
-        max_iterations=RELAX_MAX_ITERATIONS,
-        tolerance=RELAX_ENERGY_TOLERANCE,
-        stiffness=RELAX_STIFFNESS,
-        exclude_residues=RELAX_EXCLUDE_RESIDUES,
-        max_outer_iterations=RELAX_MAX_OUTER_ITERATIONS,
-        use_gpu=FLAGS.use_gpu_relax)
-  else:
-    amber_relaxer = None
 
+  amber_relaxer = relax.AmberRelaxation(
+    max_iterations=RELAX_MAX_ITERATIONS,
+    tolerance=RELAX_ENERGY_TOLERANCE,
+    stiffness=RELAX_STIFFNESS,
+    exclude_residues=RELAX_EXCLUDE_RESIDUES,
+    max_outer_iterations=RELAX_MAX_OUTER_ITERATIONS,
+    use_gpu=FLAGS.use_gpu_relax)
+
+  #amber_relaxer = None
+  
   if FLAGS.input_fasta:
+    if not os.path.isfile(FLAGS.input_fasta):
+      raise ValueError('Wrong fasta path!')
     fasta_path = FLAGS.input_fasta
     fasta_name = pathlib.Path(fasta_path).stem
     predict_structure(
         fasta_path=fasta_path,
         fasta_name=fasta_name,
+        pdb_template_path_list = FLAGS.template_pdb_path,
+        pdb_template_num = FLAGS.template_pdb_num,
         output_dir_base=output_dir,
-        data_pipeline=monomer_data_pipeline,
+        data_pipeline=data_pipeline,
         model_runner=model_runner,
         amber_relaxer=amber_relaxer,
-        random_seed=random_seed,
-        pdb_template_path_list=FLAGS.pdb_template_path)
-    
+        random_seed=random_seed)
   else:
     for item in os.listdir(FLAGS.input_fasta_dir):
       fasta_path = os.path.join(FLAGS.input_fasta_dir, item)
-      fasta_name = pathlib.Path(fasta_path).stem
       if not fasta_path.endswith('.fasta'):
         continue
+      fasta_name = pathlib.Path(fasta_path).stem
       predict_structure(
           fasta_path=fasta_path,
           fasta_name=fasta_name,
+          pdb_template_path_list = FLAGS.template_pdb_path,
+          pdb_template_num = FLAGS.template_pdb_num,
           output_dir_base=output_dir,
-          data_pipeline=monomer_data_pipeline,
+          data_pipeline=data_pipeline,
           model_runner=model_runner,
           amber_relaxer=amber_relaxer,
-          random_seed=random_seed,
-          pdb_template_path_list=FLAGS.pdb_template_path)
+          random_seed=random_seed)
 
 
 if __name__ == '__main__':
-  flags.mark_flags_as_required(['output_dir'])
+  flags.mark_flags_as_required([
+      'output_dir',
+  ])
 
   app.run(main)
+

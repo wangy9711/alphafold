@@ -29,10 +29,11 @@ import jax
 
 logging.set_verbosity(logging.INFO)
 
-param_dir = '/home/public/af2_database/params_new'
+param_dir = '/mnt/data/public/af2_database/params'
 
 # Required parameter
 # Input 
+flags.DEFINE_string('input_fasta', None, 'Input fasta file')
 flags.DEFINE_string('input_fasta_dir', None, 'Input fasta file dir')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will store the results.')
 
@@ -240,8 +241,12 @@ def main(argv):
     max_outer_iterations=RELAX_MAX_OUTER_ITERATIONS,
     use_gpu=FLAGS.use_gpu_relax)
 
-  for item in os.listdir(FLAGS.input_fasta_dir):
-    fasta_path = os.path.join(FLAGS.input_fasta_dir, item)
+  amber_relaxer = None
+
+  if FLAGS.input_fasta:
+    if not os.path.isfile(FLAGS.input_fasta):
+      raise ValueError('Wrong fasta path!')
+    fasta_path = FLAGS.input_fasta
     fasta_name = pathlib.Path(fasta_path).stem
     predict_structure(
         fasta_path=fasta_path,
@@ -251,13 +256,28 @@ def main(argv):
         output_dir_base=output_dir,
         data_pipeline=data_pipeline,
         model_runner=model_runner,
-        amber_relaxer=None,
+        amber_relaxer=amber_relaxer,
         random_seed=random_seed)
+  else:
+    for item in os.listdir(FLAGS.input_fasta_dir):
+      fasta_path = os.path.join(FLAGS.input_fasta_dir, item)
+      if not fasta_path.endswith('.fasta'):
+        continue
+      fasta_name = pathlib.Path(fasta_path).stem
+      predict_structure(
+          fasta_path=fasta_path,
+          fasta_name=fasta_name,
+          pdb_template_path_list = FLAGS.template_pdb_path,
+          pdb_template_num = FLAGS.template_pdb_num,
+          output_dir_base=output_dir,
+          data_pipeline=data_pipeline,
+          model_runner=model_runner,
+          amber_relaxer=amber_relaxer,
+          random_seed=random_seed)
 
 
 if __name__ == '__main__':
   flags.mark_flags_as_required([
-      'input_fasta_dir',
       'output_dir',
   ])
 
